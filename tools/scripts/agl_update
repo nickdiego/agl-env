@@ -8,30 +8,32 @@ BUILD=${BUILD:-0} # Build the artifact(s) before fetching/installing?
 
 TARGET="${TARGET:-raspberrypi3}"
 TARGET_SSH="${DEVICE:-rpi}"
-SDCARD='/dev/mmcblk0'
 
-# AGL/Yocto workspace path
+# AGL/Yocto workspace path (assuming defaults: branch=flounder target=rpi3)
 WS_PATH="${AGL_WS:+$AGL_WS/flounder-rpi3}"
 
 # AGL Image vars
-IMG_FILE_NAME='agl-demo-platform-wam-raspberrypi3.wic.xz'
-IMG_DBG_FILES=('agl-demo-platform-wam-raspberrypi3.tar.xz' 'agl-demo-platform-wam-raspberrypi3-dbg.tar.gz')
+AGL_DEMO_TASK='agl-demo-platform'
+IMG_PREFIX="${AGL_DEMO_TASK}-${TARGET}"
+IMG_FILE_NAME="${IMG_PREFIX}.wic.xz"
+IMG_DBG_FILES=("${IMG_PREFIX}.tar.xz" "${IMG_PREFIX}-dgb.tar.gz")
 BUILD_PATH="${WS_PATH}/build"
-IMG_PATH="${BUILD_PATH}/tmp/deploy/images/${TARGET}"
+IMG_DIR="${BUILD_PATH}/tmp/deploy/images/${TARGET}"
+IMG_PATH="${IMG_DIR}/${IMG_FILE_NAME}"
 
-if (( !REMOTE )); then
+if (( REMOTE )); then
+  # Remote setup-related vars
+  FETCH=${FETCH:-1} # Fetch the artifact(s) from the build server?
+  FETCH_DBG=${FETCH_DBG:-0} # Fetch the debug artifact(s) from the build server?
+  SERVER="${SERVER:-igalia}"
+  IMG_REMOTE_DIR="${SERVER}:${IMG_DIR}"
+else
   if [ ! -d "$BUILD_PATH" ]; then
     echo "Error: Build path does not exists '$BUILD_PATH'" >&2
     exit 1
   fi
   FETCH=0
   FETCH_DBG=0
-else
-  # Remote setup-related vars
-  FETCH=${FETCH:-1} # Fetch the artifact(s) from the build server?
-  FETCH_DBG=${FETCH_DBG:-0} # Fetch the debug artifact(s) from the build server?
-  SERVER="${SERVER:-igalia}"
-  IMG_REMOTE_PATH="${SERVER}:${IMG_PATH}"
 fi
 
 SCRIPT_TEMPLATE=$(cat <<-END
@@ -44,57 +46,60 @@ END
 
 # set package vars
 # FIXME: Supporting only RPi for now
-set_pkg_vars() {
-  local pkgname=$1
-  export PKG_FILE_NAME="${pkgname}-1.0*.armv7vehf_neon_vfpv4.rpm"
-  export PKG_PATH="${BUILD_PATH}/tmp/deploy/rpm/armv7vehf_neon_vfpv4"
-  export PKG_REMOTE_PATH="${SERVER}:${PKG_PATH}/${PKG_FILE_NAME}"
-}
-
 download_file() {
   rsync -arvzL --progress "$1" "$2"
-  #scp ${IMG_REMOTE_PATH} .
 }
 
-download_and_flash_image() {
+fetch_image() {
+  local image_path=$1
   if (( BUILD )); then
     echo '### Building whole AGL WAM demo image...'
-    build_script=$(printf "$SCRIPT_TEMPLATE" "bitbake agl-demo-platform-wam")
+    build_script=$(printf "$SCRIPT_TEMPLATE" "bitbake ${AGL_DEMO_TASK}")
     ssh $SERVER -t eval "$build_script"
   fi
   if (( FETCH )); then
       echo '### Downloading...'
-      download_file "${IMG_REMOTE_PATH}/${IMG_FILE_NAME}" .
+      download_file "${SERVER}:${image_path}"
   fi
   if (( FETCH_DBG )); then
       echo '### Downloading debug files...'
       for file in "${IMG_DBG_FILES[@]}"; do
-        download_file "${IMG_REMOTE_PATH}/$file" .
+        download_file "${IMG_REMOTE_DIR}/$file" .
       done
   fi
-  if ! lsblk ${SDCARD} &>/dev/null; then
-      echo "### SDCard not found, please insert it!" >&2
-      exit 1
-  fi
-  echo '### Writing to sdcard...'
-  xzcat $IMG_FILE_NAME | sudo dd of=${SDCARD} bs=4M status=progress && sync
 }
 
-download_and_install_pkg() {
-  local artifact="${1:-chromium68}"
+flash_image() {
+  local image_path=$1
+  local sdcard='/dev/mmcblk0'
+  if ! lsblk ${sdcard} &>/dev/null; then
+      echo "### SDCard not found, please insert it!" >&2
+      return 1
+  fi
+  echo "--- Writing to sdcard..." >&2
+  echo "----> img=${image_path}" >&2
+  time (xzcat $image_path | sudo dd of=${sdcard} bs=4M status=progress && sync)
+}
+
+# TODO: Mostly broken. Fix it!
+fetch_and_install_remote_pkg() {
+  local pkgname="${1:-chromium68}"
+  local pkg_file_name="${pkgname}-1.0*.armv7vehf_neon_vfpv4.rpm"
+  local pkg_path="${BUILD_PATH}/tmp/deploy/rpm/armv7vehf_neon_vfpv4"
+
   if (( BUILD )); then
     echo '### Building...'
-    build_script=$(printf "$SCRIPT_TEMPLATE" "bitbake -C compile $artifact")
+    build_script=$(printf "$SCRIPT_TEMPLATE" "bitbake -C compile $pkgname")
     ssh $SERVER -t eval "$build_script"
   fi
   if (( FETCH )); then
       echo '### Downloading...'
-      scp ${PKG_REMOTE_PATH} .
+      scp "${SERVER}:${pkg_path}/${pkg_file_name}" .
   fi
   echo "### Copying to ${TARGET}..."
-  scp $PKG_FILE_NAME ${TARGET_SSH}:/tmp/
+  scp $pkg_file_name ${TARGET_SSH}:/tmp/
   echo '### Installing...'
-  ssh ${TARGET_SSH} -- rpm -Uvh --force /tmp/${PKG_FILE_NAME}
+  ssh ${TARGET_SSH} -- rpm -Uvh --force /tmp/${pkg_file_name}
 }
 
 ARTIFACTS="${@:-chromium68}"
@@ -102,13 +107,18 @@ ARTIFACTS="${@:-chromium68}"
 for artifact in "$ARTIFACTS"; do
   case "$artifact" in
     image)
-      echo -ne "--> Updating whole AGL image\n\n"
-      download_and_flash_image
+      echo "-- Updating whole AGL image" >&2
+      (( REMOTE )) && fetch_image "$IMG_PATH"
+      flash_image "$IMG_PATH"
       ;;
     *)
-      echo -ne "--> Updating package: ${artifact}\n\n"
-      set_pkg_vars $artifact
-      download_and_install_pkg $artifact
+      echo "-- Updating package: ${artifact}" >&2
+      if (( REMOTE )); then
+        fetch_and_install_remote_pkg $artifact
+      else
+        echo "TODO: Support local build pkg upgrade through devtool!"
+        exit 1
+      fi
       ;;
   esac
 done
