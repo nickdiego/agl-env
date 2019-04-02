@@ -3,27 +3,36 @@
 
 set -e
 
-#FIXME: temp
-#set -x
-
+REMOTE=${REMOTE:-0} # Run in remote build mode
 BUILD=${BUILD:-0} # Build the artifact(s) before fetching/installing?
-FETCH=${FETCH:-1} # Fetch the artifact(s) from the build server?
-FETCH_DBG=${FETCH_DBG:-0} # Fetch the debug artifact(s) from the build server?
 
 TARGET="${TARGET:-raspberrypi3}"
 TARGET_SSH="${DEVICE:-rpi}"
 SDCARD='/dev/mmcblk0'
-REMOTE="${REMOTE:-igalia}"
 
-# AGL/Yocto workspace path in Build server
-WS_PATH='agl/workspaces/flounder-c68-rpi3'
+# AGL/Yocto workspace path
+WS_PATH="${AGL_WS:-$AGL_DIR/ws/flounder-rpi3}"
 
 # AGL Image vars
 IMG_FILE_NAME='agl-demo-platform-wam-raspberrypi3.wic.xz'
 IMG_DBG_FILES=('agl-demo-platform-wam-raspberrypi3.tar.xz' 'agl-demo-platform-wam-raspberrypi3-dbg.tar.gz')
 BUILD_PATH="${WS_PATH}/build"
 IMG_PATH="${BUILD_PATH}/tmp/deploy/images/${TARGET}"
-IMG_REMOTE_PATH="${REMOTE}:${IMG_PATH}"
+
+if (( !REMOTE )); then
+  if [ ! -d "$BUILD_PATH" ]; then
+    echo "Error: Build path does not exists '$BUILD_PATH'" >&2
+    exit 1
+  fi
+  FETCH=0
+  FETCH_DBG=0
+else
+  # Remote setup-related vars
+  FETCH=${FETCH:-1} # Fetch the artifact(s) from the build server?
+  FETCH_DBG=${FETCH_DBG:-0} # Fetch the debug artifact(s) from the build server?
+  SERVER="${SERVER:-igalia}"
+  IMG_REMOTE_PATH="${SERVER}:${IMG_PATH}"
+fi
 
 SCRIPT_TEMPLATE=$(cat <<-END
   cd $BUILD_PATH
@@ -39,7 +48,7 @@ set_pkg_vars() {
   local pkgname=$1
   export PKG_FILE_NAME="${pkgname}-1.0*.armv7vehf_neon_vfpv4.rpm"
   export PKG_PATH="${BUILD_PATH}/tmp/deploy/rpm/armv7vehf_neon_vfpv4"
-  export PKG_REMOTE_PATH="${REMOTE}:${PKG_PATH}/${PKG_FILE_NAME}"
+  export PKG_REMOTE_PATH="${SERVER}:${PKG_PATH}/${PKG_FILE_NAME}"
 }
 
 download_file() {
@@ -51,7 +60,7 @@ download_and_flash_image() {
   if (( BUILD )); then
     echo '### Building whole AGL WAM demo image...'
     build_script=$(printf "$SCRIPT_TEMPLATE" "bitbake agl-demo-platform-wam")
-    ssh $REMOTE -t eval "$build_script"
+    ssh $SERVER -t eval "$build_script"
   fi
   if (( FETCH )); then
       echo '### Downloading...'
@@ -76,7 +85,7 @@ download_and_install_pkg() {
   if (( BUILD )); then
     echo '### Building...'
     build_script=$(printf "$SCRIPT_TEMPLATE" "bitbake -C compile $artifact")
-    ssh $REMOTE -t eval "$build_script"
+    ssh $SERVER -t eval "$build_script"
   fi
   if (( FETCH )); then
       echo '### Downloading...'
