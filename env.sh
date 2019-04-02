@@ -68,3 +68,6 @@ agl_umount_workspace() {
     # TODO: Move sudo outside the function / move to separate script
     sudo umount "$AGL_WS"
 }
+
+# Add scripts dir to system path
+export PATH="${AGL_DIR}/tools/scripts:${PATH}"

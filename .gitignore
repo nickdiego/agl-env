@@ -1,6 +1,7 @@
 *~
 /images/
 /src/
-/tools/
+/tools/bin/python
+/tools/bin/python-config
 /ws/
 /drivers/

@@ -11,7 +11,7 @@ TARGET_SSH="${DEVICE:-rpi}"
 SDCARD='/dev/mmcblk0'
 
 # AGL/Yocto workspace path
-WS_PATH="${AGL_WS:-$AGL_DIR/ws/flounder-rpi3}"
+WS_PATH="${AGL_WS:+$AGL_WS/flounder-rpi3}"
 
 # AGL Image vars
 IMG_FILE_NAME='agl-demo-platform-wam-raspberrypi3.wic.xz'
