@@ -70,5 +70,15 @@ agl_umount_workspace() {
     sudo umount "$AGL_WS"
 }
 
+agl_logs() {
+    local device=rpi # TODO: get from parent context?
+    local exclude_regex='raspberrypi3 \(sshd\|systemd.\+\|kernel\|audit\)'
+    while :; do
+        echo -e "\n\n### AGL LOGS @ ${device} --  $(date)"
+        ssh rpi -- journalctl --follow | grep -v -e "$exclude_regex"
+        sleep 2
+    done
+}
+
 # Add scripts dir to system path
 export PATH="${AGL_DIR}/tools/scripts:${PATH}"
