@@ -102,6 +102,31 @@ fetch_and_install_remote_pkg() {
   ssh ${TARGET_SSH} -- rpm -Uvh --force /tmp/${pkg_file_name}
 }
 
+install_demo_apps() {
+  if [ ! -d $AGL_DIR ]; then
+    echo "Error: AGL_DIR env var not set!"
+    return 1
+  fi
+
+  local demos_src_dir="${AGL_DIR}/src/wam-demo-applications"
+  local demos_to_install=(memory-match aquarium)
+  (
+    cd $demos_src_dir && make && cd package
+    for demo in "${demos_to_install[@]}"; do
+      local pkg="${demo}.wgt"
+      echo "Installing ${pkg}.." >&2
+      scp "$pkg" "${TARGET_SSH}:/tmp"
+      ssh $TARGET_SSH -- afm-util install "/tmp/${pkg}"
+    done
+  )
+
+  # TODO: Move to another place
+  local weston_config_path=/etc/xdg/weston/weston.ini
+  echo "Updating weston config for tests.."
+  scp ${AGL_DIR}/debug/rpi-weston.ini ${TARGET_SSH}:${weston_config_path}
+}
+
+
 ARTIFACTS="${@:-chromium68}"
 
 for artifact in "$ARTIFACTS"; do
@@ -110,6 +135,10 @@ for artifact in "$ARTIFACTS"; do
       echo "-- Updating whole AGL image" >&2
       (( REMOTE )) && fetch_image "$IMG_PATH"
       flash_image "$IMG_PATH"
+      ;;
+    demos)
+      echo "-- Updating demo apps" >&2
+      install_demo_apps
       ;;
     *)
       echo "-- Updating package: ${artifact}" >&2

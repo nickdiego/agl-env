@@ -48,6 +48,7 @@ fi
 # Remote AGL workspace
 export BUILDMACHINE=${BUILDMACHINE:-192.168.1.110}
 export AGL_WS=${AGL_WS:-${AGL_DIR}/ws}
+export AGL_DIR
 
 agl_mount_workspace() {
     if findmnt -n --raw $AGL_WS &>/dev/null; then
